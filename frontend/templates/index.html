@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
+  <title>Maxsus sunʼiy intellekt platformasi</title>
+  <link rel="stylesheet" href="/static/css/style.css?v=20260820j" />
+  <script>
+    try {
+      var t = localStorage.getItem("ui_theme");
+      if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <button
+          type="button"
+          class="icon-toggle"
+          id="btn-sidebar"
+          title="Sozlamalar"
+          aria-label="Sozlamalarni ochish"
+          aria-controls="sidebar"
+          aria-expanded="false"
+        >
+          <span class="icon-sidebar" aria-hidden="true"></span>
+        </button>
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <h1>Maxsus sunʼiy intellekt platformasi</h1>
+        </div>
+      </div>
+
+      <nav class="app-nav" aria-label="Asosiy bo‘limlar">
+        <button type="button" class="nav-btn is-active" data-view="home">Kirish</button>
+        <button type="button" class="nav-btn" data-view="pipeline">Pipeline</button>
+        <button type="button" class="nav-btn" data-view="flow">Jarayon</button>
+        <button type="button" class="nav-btn" data-view="chat">Chat</button>
+      </nav>
+
+      <div class="status-cluster" id="status-cluster">
+        <button
+          type="button"
+          class="icon-toggle"
+          id="btn-theme"
+          title="Kun rejimi"
+          aria-label="Kun rejimiga o‘tish"
+        >
+          <span class="icon-sun" aria-hidden="true"></span>
+          <span class="icon-moon" aria-hidden="true"></span>
+        </button>
+        <div class="model-health" id="model-health">
+          <button type="button" class="model-chip is-unknown" data-worker="gemma" title="Gemma holati">
+            <span class="model-dot" aria-hidden="true"></span>
+            <span>Gemma</span>
+          </button>
+          <button type="button" class="model-chip is-unknown" data-worker="gigaam" title="GigaAM holati">
+            <span class="model-dot" aria-hidden="true"></span>
+            <span>GigaAM</span>
+          </button>
+          <button type="button" class="model-chip is-unknown" data-worker="nllb" title="NLLB holati">
+            <span class="model-dot" aria-hidden="true"></span>
+            <span>NLLB</span>
+          </button>
+          <button type="button" class="model-chip is-unknown" data-worker="surya" title="Surya OCR holati">
+            <span class="model-dot" aria-hidden="true"></span>
+            <span>Surya</span>
+          </button>
+          <div class="model-health-panel" id="model-health-panel" hidden></div>
+        </div>
+        <span class="pill" id="pill-device">Qurilma…</span>
+        <span class="pill" id="pill-queue">Navbat: 0</span>
+        <span class="pill pill-offline">Offline</span>
+      </div>
+    </header>
+
+    <section class="view view-home" id="view-home">
+      <div class="home-layout">
+        <div class="home-main">
+          <h2 class="view-title">Davlatlar bo‘yicha xulosalar</h2>
+          <div class="country-tabs home-country-tabs" id="home-countries" aria-label="Davlatlar"></div>
+          <div class="home-grid" id="home-grid" aria-live="polite"></div>
+          <div class="empty" id="home-empty">
+            <div class="empty-icon" aria-hidden="true"></div>
+            <h2>Hali xulosa yo‘q</h2>
+            <p>Pipeline da davlat bo‘yicha fayl tanlang — xulosalar shu yerda chiqadi.</p>
+          </div>
+        </div>
+        <aside class="stats-panel" aria-label="Statistika">
+          <div class="stats-head">
+            <h2 class="view-title">Statistika</h2>
+            <button type="button" class="btn btn-tiny" id="btn-stats-chart" title="Diagramma">Diagramma</button>
+          </div>
+          <div class="period-tabs" id="period-tabs">
+            <button type="button" class="nav-btn is-active" data-period="day">Kunlik</button>
+            <button type="button" class="nav-btn" data-period="week">Haftalik</button>
+            <button type="button" class="nav-btn" data-period="month">Oylik</button>
+            <button type="button" class="nav-btn" data-period="year">Yillik</button>
+          </div>
+          <div class="stat-list" id="stat-list"></div>
+          <div class="stat-chart" id="stat-chart" hidden></div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="view view-pipeline" id="view-pipeline" hidden>
+    <div class="shell">
+      <aside class="sidebar" id="sidebar" aria-label="Sozlamalar va fayllar" aria-hidden="true">
+        <section class="side-block">
+          <h2>Sozlamalar</h2>
+
+          <div class="dropdown" id="dd-llm">
+            <button type="button" class="dropdown-trigger" id="btn-llm" aria-expanded="false" aria-controls="llm-panel">
+              <span>
+                <span class="dropdown-kicker">LLM model</span>
+                <span class="dropdown-value" id="llm-value">Tanlang</span>
+              </span>
+            </button>
+            <div class="dropdown-panel" id="llm-panel" hidden>
+              <p class="dropdown-section-title">1. Xulosa modeli</p>
+              <div class="option-list" id="llm-summary-list" role="listbox" aria-label="Xulosa modellari"></div>
+              <p class="dropdown-section-title">2. Tarjima modeli</p>
+              <div class="option-list" id="llm-translate-list" role="listbox" aria-label="Tarjima modellari"></div>
+            </div>
+          </div>
+
+          <div class="dropdown" id="dd-ocr">
+            <button type="button" class="dropdown-trigger" id="btn-ocr" aria-expanded="false" aria-controls="ocr-panel">
+              <span>
+                <span class="dropdown-kicker">OCR model</span>
+                <span class="dropdown-value" id="ocr-value">Tanlang</span>
+              </span>
+            </button>
+            <div class="dropdown-panel" id="ocr-panel" hidden>
+              <div class="option-list" id="ocr-list" role="listbox" aria-label="OCR modellari"></div>
+              <p class="hint">Rasm va skaner-PDF. Surya joylashuvni saqlaydi; Gemma — lokal Vision.</p>
+            </div>
+          </div>
+
+          <div class="dropdown" id="dd-asr">
+            <button type="button" class="dropdown-trigger" id="btn-asr" aria-expanded="false" aria-controls="asr-panel">
+              <span>
+                <span class="dropdown-kicker">ASR model</span>
+                <span class="dropdown-value" id="asr-value">Tanlang</span>
+              </span>
+            </button>
+            <div class="dropdown-panel" id="asr-panel" hidden>
+              <div class="option-list" id="asr-list" role="listbox" aria-label="ASR modellari"></div>
+              <label class="field field-inset">
+                <span>Til (eshitilgan tilda yoziladi)</span>
+                <select id="asr-language" title="Eshitilgan til alifbosida yoziladi"></select>
+              </label>
+            </div>
+          </div>
+
+          <div class="dropdown" id="dd-files">
+            <button type="button" class="dropdown-trigger" id="btn-files" aria-expanded="false" aria-controls="files-panel">
+              <span>
+                <span class="dropdown-kicker">Fayl tanlash</span>
+                <span class="dropdown-value" id="files-value">Davlat bo‘yicha tanlang</span>
+              </span>
+            </button>
+            <div class="dropdown-panel dropdown-panel-files" id="files-panel" hidden>
+              <p class="hint">Har bir davlat uchun bitta fayl yoki papka tanlanadi.</p>
+              <ul class="country-file-list" id="country-file-list"></ul>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <main class="workspace" id="workspace">
+        <div class="country-tabs" id="pipeline-countries" aria-label="Davlatlar"></div>
+        <div class="pipeline-file-bar">
+          <div>
+            <strong id="pipeline-country-title">Oʻzbekiston</strong>
+            <span class="pipeline-file-path" id="pipeline-file-path">Fayl tanlanmagan</span>
+          </div>
+        </div>
+        <div class="feed" id="feed" aria-live="polite"></div>
+        <div class="feed-sentinel" id="sentinel" hidden>
+          <span class="spinner"></span>
+          <span>Yana yuklanmoqda…</span>
+        </div>
+        <div class="empty" id="empty-state">
+          <div class="empty-icon" aria-hidden="true"></div>
+          <h2>Hali qayta ishlangan fayl yo‘q</h2>
+          <p>
+            Yuqoridan davlatni tanlang, chapdan shu davlat uchun fayl qo‘shing.
+          </p>
+        </div>
+      </main>
+    </div>
+    </section>
+
+    <section class="view view-flow" id="view-flow" hidden>
+      <div class="flow-page">
+        <div class="flow-head">
+          <div>
+            <h2 class="view-title">Jarayon</h2>
+            <p class="hint">Fayl kelishidan oxirgi natijagacha — jonli bosqichlar</p>
+          </div>
+          <button type="button" class="btn btn-tiny" id="btn-flow-refresh">Yangilash</button>
+        </div>
+        <ol class="flow-track" id="flow-track" aria-label="Ish oqimi"></ol>
+        <div class="flow-active" id="flow-active" aria-live="polite"></div>
+        <div class="flow-board" id="flow-board"></div>
+      </div>
+    </section>
+
+    <section class="view view-chat" id="view-chat" hidden>
+      <div class="chat-shell">
+        <div class="chat-head">
+          <h2 class="view-title">RAG chat</h2>
+          <div class="country-tabs" id="chat-countries" aria-label="Davlat RAG"></div>
+          <p class="hint">Javob faqat tanlangan davlatning RAG bazasidan olinadi.</p>
+        </div>
+        <div class="chat-messages" id="chat-messages" aria-live="polite">
+          <div class="chat-bubble bot">
+            Salom. Yaxshi deb bilgan PDF, Word, rasm yoki audio matnini Pipeline da «Bazaga yozish» orqali saqlang. Keyin shu yerda savol bering.
+          </div>
+        </div>
+        <form class="chat-form" id="chat-form">
+          <textarea
+            id="chat-input"
+            rows="2"
+            placeholder="Savolingizni yozing…"
+            maxlength="8000"
+          ></textarea>
+          <button type="submit" class="btn btn-primary" id="btn-chat-send">Yuborish</button>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <div class="picker-modal" id="picker-modal" hidden>
+    <div class="picker-dialog" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+      <div class="picker-dialog-head">
+        <h3 id="picker-title">Papka yoki fayl tanlash</h3>
+        <button type="button" class="btn btn-tiny" id="btn-picker-close">Yopish</button>
+      </div>
+      <div class="picker-panel" id="picker-panel">
+        <div class="picker-shortcuts" id="picker-shortcuts"></div>
+        <div class="picker-toolbar">
+          <button type="button" class="btn btn-tiny" id="btn-browse-up" title="Yuqoriga">← Orqaga</button>
+          <div class="picker-path" id="picker-path" title=""></div>
+        </div>
+        <div class="picker-list" id="picker-list" role="list"></div>
+      </div>
+      <div class="picker-footer">
+        <button type="button" class="btn btn-tiny" id="btn-upload-file">Bitta fayl yuklash</button>
+        <button type="button" class="btn btn-primary" id="btn-use-folder">Shu papkani biriktirish</button>
+      </div>
+    </div>
+  </div>
+
+  <input
+    type="file"
+    id="file-input"
+    hidden
+    accept=".pdf,.docx,.txt,.md,.rtf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,.wav,.mp3,.ogg,.flac,.m4a,.aac,.wma,.mp4,.mkv,.mov,.webm,.avi"
+  />
+  <script src="/static/js/app.js?v=20260820s"></script>
+</body>
+</html>

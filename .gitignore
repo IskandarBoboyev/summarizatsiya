@@ -1,0 +1,31 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+
+# Maxfiy va mahalliy sozlamalar
+.env
+.env.*
+!.env.example
+
+# Mahalliy ma'lumotlar, log va PID
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/*.log
+data/*.pid
+*.log
+*.pid
+
+# Modellar (faqat papka tuzilmasi gitda qoladi — og'irliklar mahalliy)
+models/**
+!models/.gitkeep
+!models/README.txt
+
+# Kuzatuv papkasidagi foydalanuvchi fayllari
+watched_folders/**
+!watched_folders/.gitkeep
