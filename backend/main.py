@@ -24,7 +24,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -52,11 +52,13 @@ from backend.config import (
 )
 from backend.database import (
     country_file_stats,
+    update_folder_asr_model,
     get_all_settings,
     get_document,
     init_db,
     list_documents,
     list_home_by_country,
+    document_flow_steps,
     list_pipeline_live,
     mark_reprocess,
     public_document,
@@ -132,6 +134,12 @@ class FolderIn(BaseModel):
 
     path: str = Field(..., min_length=1, description="Lokal fayl yoki katalog yo'li")
     country: str = Field(..., min_length=2, max_length=8)
+
+
+class FolderPatchIn(BaseModel):
+    """Kuzatiladigan papka sozlamasi."""
+
+    asr_model: str = ""
 
 
 class ChatIn(BaseModel):
@@ -241,6 +249,15 @@ async def _no_cache_static(request: Request, call_next):
 async def index(request: Request) -> HTMLResponse:
     """Asosiy SPA interfeysi."""
     return templates.TemplateResponse(request, "index.html")
+
+
+@app.get("/gerb.mp4")
+async def gerb_video() -> FileResponse:
+    """Lokal 3D gerb videosi — tashqi URL yo'q."""
+    path = FRONTEND_DIR.parent / "public" / "gerb.mp4"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="gerb.mp4 topilmadi")
+    return FileResponse(path, media_type="video/mp4")
 
 
 # ---------------------------------------------------------------------------
@@ -439,6 +456,19 @@ async def api_add_folder(body: FolderIn) -> dict:
     return folder
 
 
+@app.patch("/api/folders/{folder_id}")
+async def api_patch_folder(folder_id: int, body: FolderPatchIn) -> dict:
+    """Papka uchun transkripsiya modelini belgilash."""
+    try:
+        folder = await asyncio.to_thread(update_folder_asr_model, folder_id, body.asr_model)
+    except KeyError:
+        raise HTTPException(404, "Papka topilmadi") from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await hub.broadcast("folders", watcher_service.list_watch_folders())
+    return folder
+
+
 @app.delete("/api/folders/{folder_id}")
 async def api_delete_folder(folder_id: int) -> dict:
     """Papkani kuzatuvdan olib tashlash."""
@@ -471,11 +501,13 @@ async def api_country_stats(
 
 @app.get("/api/documents/home")
 async def api_home_documents(
-    limit: int = Query(10, ge=1, le=20),
+    limit: int = Query(20, ge=1, le=50),
+    period: str = Query("day", pattern="^(day|week|month|year)$"),
 ) -> dict:
-    """Kirish: 6 davlat bo'yicha oxirgi xulosalar."""
-    groups = list_home_by_country(limit)
+    """Kirish: tanlangan davr ichida 6 davlat bo'yicha oxirgi xulosalar."""
+    groups = list_home_by_country(limit, period)
     return {
+        "period": period,
         "countries": [
             {
                 "key": g["key"],
@@ -500,17 +532,31 @@ PIPELINE_STAGES = (
 @app.get("/api/pipeline/live")
 async def api_pipeline_live() -> dict:
     """Jarayon oynasi: fayldan natijagacha bosqichlar."""
-    items = [public_document(x) for x in list_pipeline_live(40)]
+    raw = list_pipeline_live(60)
+    items: list[dict] = []
     columns: dict[str, list] = {s["id"]: [] for s in PIPELINE_STAGES}
     columns["error"] = []
     active = None
-    for doc in items:
-        if not doc:
+    for src in raw:
+        pub = public_document(src)
+        if not pub:
             continue
-        stage = str(doc.get("pipeline_stage") or "queued")
-        columns.setdefault(stage, []).append(doc)
-        if doc.get("status") == "processing" and active is None:
-            active = doc
+        pub["flow_steps"] = document_flow_steps(pub)
+        items.append(pub)
+        stage = str(pub.get("pipeline_stage") or "queued")
+        if stage == "error":
+            columns["error"].append(pub)
+        else:
+            columns.setdefault(stage, []).append(pub)
+        if pub.get("status") == "processing" and active is None:
+            active = pub
+    if active is None:
+        for doc in items:
+            if doc.get("status") != "pending":
+                active = doc
+                break
+        if active is None and items:
+            active = items[0]
     return {
         "stages": list(PIPELINE_STAGES),
         "columns": columns,

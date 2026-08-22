@@ -31,7 +31,18 @@ class AsrRpc:
                 "error": str(exc),
             }
 
-    def transcribe(self, filepath: str | Path, language: str = "auto") -> str:
+    def transcribe(
+        self,
+        filepath: str | Path,
+        language: str = "auto",
+        model_key: str = "",
+        country: str = "",
+    ) -> str:
+        key = (model_key or "gigaam-multilingual").strip().lower()
+        if key.startswith("seamless"):
+            from backend.services.seamless_rpc import seamless_rpc
+
+            return seamless_rpc.transcribe(filepath, language=language, country=country)
         if not USE_MODEL_SERVERS:
             from backend.services.asr_service import asr_service
 

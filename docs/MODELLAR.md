@@ -23,6 +23,7 @@ Nuqmani bosing — batafsil panel ochiladi. Holat har ~4 soniyada yangilanadi.
 | Gemma | `8001` | Gemma 4e / Gemma 26 | Xulosa, chat |
 | GigaAM | `8002` | GigaAM-Multilingual | Audio / video transkripsiya |
 | NLLB | `8003` | NLLB-200 1.3B | O‘zbek lotin tarjima |
+| TranslateGemma | `8005` | TranslateGemma 4B | O‘zbek lotin tarjima |
 
 Modellar **alohida jarayonda** yashaydi. UI qayta ochilsa ham og‘irliklar qayta yuklanmaydi.
 
@@ -60,6 +61,7 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 .venv/bin/python -m uvicorn backend.workers.gemma_app:app --host 127.0.0.1 --port 8001
 .venv/bin/python -m uvicorn backend.workers.gigaam_app:app --host 127.0.0.1 --port 8002
 .venv/bin/python -m uvicorn backend.workers.nllb_app:app --host 127.0.0.1 --port 8003
+.venv/bin/python -m uvicorn backend.workers.translategemma_app:app --host 127.0.0.1 --port 8005
 .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -94,6 +96,7 @@ curl -sS http://127.0.0.1:8003/health
 curl -sS http://127.0.0.1:8001/status
 curl -sS http://127.0.0.1:8002/status
 curl -sS http://127.0.0.1:8003/status
+curl -sS http://127.0.0.1:8005/status
 
 # UI orqali yig‘ma holat
 curl -sS http://127.0.0.1:8000/api/models/health

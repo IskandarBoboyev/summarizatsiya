@@ -25,6 +25,7 @@ from backend.config import (
     empty_accelerator_cache,
 )
 from backend.database import (
+    folder_asr_model_for_country,
     get_all_settings,
     get_document,
     list_pending_documents,
@@ -34,8 +35,8 @@ from backend.database import (
 )
 from backend.services.asr_rpc import asr_rpc
 from backend.services.llm_rpc import llm_rpc
-from backend.services.nllb_rpc import nllb_rpc
 from backend.services.ocr_parser import ocr_parser
+from backend.services.translation_rpc import translate_text
 from backend.services.translation_text import (
     clean_summary_output,
     clean_translation_output,
@@ -96,6 +97,9 @@ class DocumentPipeline:
             summary_key = settings.get("llm_summary_model") or fallback
             translate_key = settings.get("llm_translate_model") or "nllb-200"
             asr_lang = settings.get("asr_language") or "auto"
+            global_asr = settings.get("asr_model") or "gigaam-multilingual"
+            folder_asr = folder_asr_model_for_country(str(doc.get("country") or ""))
+            asr_model = folder_asr or global_asr
             quant = settings.get("quantization", "auto")
             ocr_model = settings.get("ocr_model") or "surya"
 
@@ -110,7 +114,7 @@ class DocumentPipeline:
 
             try:
                 result = self._run(
-                    doc, summary_key, translate_key, asr_lang, quant, ocr_model
+                    doc, summary_key, translate_key, asr_lang, quant, ocr_model, asr_model
                 )
                 update_document(
                     doc_id,
@@ -144,6 +148,7 @@ class DocumentPipeline:
         asr_lang: str,
         quant: str,
         ocr_model: str = "surya",
+        asr_model: str = "gigaam-multilingual",
     ) -> dict:
         """
         Fayl turiga qarab OCR yoki ASR, so'ng Gemma xulosa + NLLB tarjima.
@@ -162,7 +167,12 @@ class DocumentPipeline:
         transcription = ""
 
         if is_media:
-            transcription = asr_rpc.transcribe(path, language=asr_lang)
+            transcription = asr_rpc.transcribe(
+                path,
+                language=asr_lang,
+                model_key=asr_model,
+                country=str(doc.get("country") or ""),
+            )
             original = transcription
         else:
             original = ocr_parser.extract(path, engine=ocr_model)
@@ -191,6 +201,7 @@ class DocumentPipeline:
             summary = self._finalize_summary(
                 llm_rpc.summarize(original, summary_key, quant),
                 country=str(doc.get("country") or ""),
+                translate_key=translate_key,
             )
             update_document(
                 int(doc["id"]),
@@ -202,8 +213,13 @@ class DocumentPipeline:
                 original,
                 country=str(doc.get("country") or ""),
                 doc_id=int(doc["id"]),
+                translate_key=translate_key,
             )
-            model_used = f"{summary_key} + nllb-200"
+            model_used = (
+                f"{asr_model} + {summary_key} + {translate_key}"
+                if is_media
+                else f"{summary_key} + {translate_key}"
+            )
         elif is_media:
             raise RuntimeError("Transkripsiya bo'sh. ASR modelini tekshiring.")
 
@@ -216,8 +232,8 @@ class DocumentPipeline:
             "asr_language": asr_lang if is_media else "",
         }
 
-    def _finalize_summary(self, summary: str, country: str) -> str:
-        """Xulosani tozalaydi; inglizcha/kirill chiqsa NLLB bilan lotin o'zbekchaga o'giradi."""
+    def _finalize_summary(self, summary: str, country: str, translate_key: str = "nllb-200") -> str:
+        """Xulosani tozalaydi; inglizcha/kirill chiqsa tanlangan model bilan lotinga o'giradi."""
         text = clean_summary_output(summary)
         if not text:
             return ""
@@ -227,12 +243,18 @@ class DocumentPipeline:
         elif looks_like_cyrillic(text):
             src = "auto"
         if src:
-            logger.info("Xulosa %s — NLLB orqali o'zbek lotiniga o'giriladi", src)
-            text = nllb_rpc.translate(text, src_lang=src, country=country)
+            logger.info("Xulosa %s — %s orqali o'zbek lotiniga o'giriladi", src, translate_key)
+            text = translate_text(text, src_lang=src, country=country, model_key=translate_key)
             text = clean_summary_output(text)
         return text
 
-    def _translate_document(self, original: str, country: str, doc_id: int) -> str:
+    def _translate_document(
+        self,
+        original: str,
+        country: str,
+        doc_id: int,
+        translate_key: str = "nllb-200",
+    ) -> str:
         """
         Asl hujjatni to'liq, paragraf-paragraf o'zbek lotiniga o'giradi.
 
@@ -243,10 +265,11 @@ class DocumentPipeline:
             return ""
         done: list[tuple[str, str]] = []
         for idx, (chunk, sep) in enumerate(units, start=1):
-            piece = nllb_rpc.translate(
+            piece = translate_text(
                 chunk,
                 src_lang="auto",
                 country=country,
+                model_key=translate_key,
             )
             done.append((clean_translation_output(piece) or chunk, sep))
             if idx == 1 or idx % 5 == 0 or idx == len(units):

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark light" />
   <title>Maxsus sunʼiy intellekt platformasi</title>
-  <link rel="stylesheet" href="/static/css/style.css?v=20260820j" />
+  <link rel="stylesheet" href="/static/css/style.css?v=20260822j" />
   <script>
     try {
       var t = localStorage.getItem("ui_theme");
@@ -17,6 +17,108 @@
   <div class="app">
     <header class="topbar">
       <div class="brand">
+        <div class="emblem-gerb" role="img" aria-label="O'zbekiston Respublikasi Davlat gerbi">
+          <video
+            id="emblem-gerb-video"
+            muted
+            autoplay
+            loop
+            playsinline
+            webkit-playsinline
+            preload="auto"
+            disablepictureinpicture
+            controlslist="nodownload nofullscreen noremoteplayback"
+          >
+            <source src="/static/gerb.mp4" type="video/mp4" />
+            <source src="/gerb.mp4" type="video/mp4" />
+          </video>
+          <canvas id="emblem-gerb-canvas" width="112" height="112" aria-hidden="true"></canvas>
+        </div>
+        <script>
+          (function () {
+            var v = document.getElementById("emblem-gerb-video");
+            var c = document.getElementById("emblem-gerb-canvas");
+            if (!v || !c) return;
+            v.muted = true;
+            v.defaultMuted = true;
+            v.setAttribute("muted", "");
+            var play = function () { v.play().catch(function () {}); };
+            if (v.readyState >= 2) play();
+            else v.addEventListener("canplay", play, { once: true });
+
+            var ctx = c.getContext("2d", { willReadFrequently: true });
+            if (!ctx) return;
+            var running = false;
+
+            function keyBlueToWhite(img) {
+              var d = img.data;
+              var w = img.width;
+              var h = img.height;
+              function px(x, y) {
+                var i = (y * w + x) * 4;
+                return [d[i], d[i + 1], d[i + 2]];
+              }
+              var s = [px(1, 1), px(w - 2, 1), px(1, h - 2), px(w - 2, h - 2)];
+              var kr = 0, kg = 0, kb = 0, n = 0;
+              for (var k = 0; k < s.length; k++) {
+                if (s[k][2] > s[k][0] + 40) {
+                  kr += s[k][0];
+                  kg += s[k][1];
+                  kb += s[k][2];
+                  n++;
+                }
+              }
+              if (!n) { kr = 6; kg = 96; kb = 156; } else { kr /= n; kg /= n; kb /= n; }
+
+              for (var i = 0; i < d.length; i += 4) {
+                var r = d[i], g = d[i + 1], b = d[i + 2];
+                var dist = Math.sqrt((r - kr) * (r - kr) + (g - kg) * (g - kg) + (b - kb) * (b - kb));
+                var blueScreen = r < 55 && b > 125 && b > r + 70 && g > 60 && g < 160;
+                if (dist < 46 || (blueScreen && dist < 78)) {
+                  d[i] = 255;
+                  d[i + 1] = 255;
+                  d[i + 2] = 255;
+                } else if (dist < 66) {
+                  var t = (dist - 46) / 20;
+                  d[i] = (r * t + 255 * (1 - t) + 0.5) | 0;
+                  d[i + 1] = (g * t + 255 * (1 - t) + 0.5) | 0;
+                  d[i + 2] = (b * t + 255 * (1 - t) + 0.5) | 0;
+                }
+              }
+            }
+
+            function draw() {
+              if (v.readyState < 2) return;
+              var w = c.width, h = c.height;
+              ctx.fillStyle = "#ffffff";
+              ctx.fillRect(0, 0, w, h);
+              var scale = 2.35;
+              var dw = w * scale, dh = h * scale;
+              var dx = (w - dw) / 2;
+              var dy = (h - dh) / 2 - h * 0.16;
+              ctx.drawImage(v, dx, dy, dw, dh);
+              var img = ctx.getImageData(0, 0, w, h);
+              keyBlueToWhite(img);
+              ctx.putImageData(img, 0, 0);
+            }
+
+            function loop() {
+              if (!running) return;
+              draw();
+              requestAnimationFrame(loop);
+            }
+
+            function start() {
+              if (running) return;
+              running = true;
+              loop();
+            }
+
+            v.addEventListener("playing", start);
+            v.addEventListener("canplay", function () { play(); start(); });
+            if (!v.paused) start();
+          })();
+        </script>
         <button
           type="button"
           class="icon-toggle"
@@ -28,10 +130,7 @@
         >
           <span class="icon-sidebar" aria-hidden="true"></span>
         </button>
-        <span class="brand-mark" aria-hidden="true"></span>
-        <div>
-          <h1>Maxsus sunʼiy intellekt platformasi</h1>
-        </div>
+        <h1>Maxsus sunʼiy intellekt platformasi</h1>
       </div>
 
       <nav class="app-nav" aria-label="Asosiy bo‘limlar">
@@ -53,21 +152,21 @@
           <span class="icon-moon" aria-hidden="true"></span>
         </button>
         <div class="model-health" id="model-health">
-          <button type="button" class="model-chip is-unknown" data-worker="gemma" title="Gemma holati">
+          <button type="button" class="model-chip is-unknown" data-worker="gemma" title="Xulosa">
             <span class="model-dot" aria-hidden="true"></span>
-            <span>Gemma</span>
+            <span class="model-chip-text">Xulosa</span>
           </button>
-          <button type="button" class="model-chip is-unknown" data-worker="gigaam" title="GigaAM holati">
+          <button type="button" class="model-chip is-unknown" data-worker="gigaam" title="Transkripsiya">
             <span class="model-dot" aria-hidden="true"></span>
-            <span>GigaAM</span>
+            <span class="model-chip-text">Transkripsiya</span>
           </button>
-          <button type="button" class="model-chip is-unknown" data-worker="nllb" title="NLLB holati">
+          <button type="button" class="model-chip is-unknown" id="chip-translate" data-worker="nllb" title="Tarjima">
             <span class="model-dot" aria-hidden="true"></span>
-            <span>NLLB</span>
+            <span class="model-chip-text">Tarjima</span>
           </button>
-          <button type="button" class="model-chip is-unknown" data-worker="surya" title="Surya OCR holati">
+          <button type="button" class="model-chip is-unknown" data-worker="surya" title="OCR">
             <span class="model-dot" aria-hidden="true"></span>
-            <span>Surya</span>
+            <span class="model-chip-text">OCR</span>
           </button>
           <div class="model-health-panel" id="model-health-panel" hidden></div>
         </div>
@@ -83,10 +182,32 @@
           <h2 class="view-title">Davlatlar bo‘yicha xulosalar</h2>
           <div class="country-tabs home-country-tabs" id="home-countries" aria-label="Davlatlar"></div>
           <div class="home-grid" id="home-grid" aria-live="polite"></div>
-          <div class="empty" id="home-empty">
+          <div class="skeleton-grid" id="home-skeleton" aria-hidden="true">
+            <div class="skeleton-card">
+              <span class="skeleton h-16 w-60"></span>
+              <span class="skeleton w-40"></span>
+              <span class="skeleton h-72"></span>
+            </div>
+            <div class="skeleton-card">
+              <span class="skeleton h-16 w-80"></span>
+              <span class="skeleton w-40"></span>
+              <span class="skeleton h-72"></span>
+            </div>
+            <div class="skeleton-card">
+              <span class="skeleton h-16 w-60"></span>
+              <span class="skeleton w-40"></span>
+              <span class="skeleton h-72"></span>
+            </div>
+            <div class="skeleton-card">
+              <span class="skeleton h-16 w-80"></span>
+              <span class="skeleton w-40"></span>
+              <span class="skeleton h-72"></span>
+            </div>
+          </div>
+          <div class="empty" id="home-empty" hidden>
             <div class="empty-icon" aria-hidden="true"></div>
             <h2>Hali xulosa yo‘q</h2>
-            <p>Pipeline da davlat bo‘yicha fayl tanlang — xulosalar shu yerda chiqadi.</p>
+            <p>Tanlangan davrda xulosa yo‘q. Pipeline da fayl qo‘shing yoki boshqa davrni tanlang.</p>
           </div>
         </div>
         <aside class="stats-panel" aria-label="Statistika">
@@ -149,6 +270,7 @@
             </button>
             <div class="dropdown-panel" id="asr-panel" hidden>
               <div class="option-list" id="asr-list" role="listbox" aria-label="ASR modellari"></div>
+              <p class="hint">Umumiy tanlov. Har bir davlat papkasida alohida model belgilash mumkin.</p>
               <label class="field field-inset">
                 <span>Til (eshitilgan tilda yoziladi)</span>
                 <select id="asr-language" title="Eshitilgan til alifbosida yoziladi"></select>
@@ -164,7 +286,7 @@
               </span>
             </button>
             <div class="dropdown-panel dropdown-panel-files" id="files-panel" hidden>
-              <p class="hint">Har bir davlat uchun bitta fayl yoki papka tanlanadi.</p>
+              <p class="hint">Har bir davlat uchun papka va transkripsiya modelini tanlang.</p>
               <ul class="country-file-list" id="country-file-list"></ul>
             </div>
           </div>
@@ -180,11 +302,23 @@
           </div>
         </div>
         <div class="feed" id="feed" aria-live="polite"></div>
+        <div class="feed-skeleton" id="feed-skeleton" hidden aria-hidden="true">
+          <div class="skeleton-card">
+            <span class="skeleton h-16 w-60"></span>
+            <span class="skeleton w-40"></span>
+            <span class="skeleton h-72"></span>
+          </div>
+          <div class="skeleton-card">
+            <span class="skeleton h-16 w-80"></span>
+            <span class="skeleton w-40"></span>
+            <span class="skeleton h-72"></span>
+          </div>
+        </div>
         <div class="feed-sentinel" id="sentinel" hidden>
           <span class="spinner"></span>
           <span>Yana yuklanmoqda…</span>
         </div>
-        <div class="empty" id="empty-state">
+        <div class="empty" id="empty-state" hidden>
           <div class="empty-icon" aria-hidden="true"></div>
           <h2>Hali qayta ishlangan fayl yo‘q</h2>
           <p>
@@ -200,13 +334,14 @@
         <div class="flow-head">
           <div>
             <h2 class="view-title">Jarayon</h2>
-            <p class="hint">Fayl kelishidan oxirgi natijagacha — jonli bosqichlar</p>
+            <p class="hint">Tanlangan fayl: kelishidan o‘qish, xulosa, tarjima va natijagacha</p>
           </div>
           <button type="button" class="btn btn-tiny" id="btn-flow-refresh">Yangilash</button>
         </div>
+        <div class="flow-files" id="flow-files" aria-label="Fayllar"></div>
         <ol class="flow-track" id="flow-track" aria-label="Ish oqimi"></ol>
         <div class="flow-active" id="flow-active" aria-live="polite"></div>
-        <div class="flow-board" id="flow-board"></div>
+        <div class="flow-journey" id="flow-journey"></div>
       </div>
     </section>
 
@@ -262,6 +397,6 @@
     hidden
     accept=".pdf,.docx,.txt,.md,.rtf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp,.wav,.mp3,.ogg,.flac,.m4a,.aac,.wma,.mp4,.mkv,.mov,.webm,.avi"
   />
-  <script src="/static/js/app.js?v=20260820s"></script>
+  <script src="/static/js/app.js?v=20260822g"></script>
 </body>
 </html>

@@ -144,6 +144,8 @@ def init_db() -> None:
         folder_cols = [str(r[1]) for r in conn.execute("PRAGMA table_info(watched_folders)").fetchall()]
         if "country" not in folder_cols:
             conn.execute("ALTER TABLE watched_folders ADD COLUMN country TEXT NOT NULL DEFAULT ''")
+        if "asr_model" not in folder_cols:
+            conn.execute("ALTER TABLE watched_folders ADD COLUMN asr_model TEXT NOT NULL DEFAULT ''")
         rag_cols = [str(r[1]) for r in conn.execute("PRAGMA table_info(rag_chunks)").fetchall()]
         if "country" not in rag_cols:
             conn.execute("ALTER TABLE rag_chunks ADD COLUMN country TEXT NOT NULL DEFAULT ''")
@@ -268,11 +270,14 @@ def get_all_settings() -> dict[str, str]:
 # Kuzatiladigan papkalar
 # ---------------------------------------------------------------------------
 
+_FOLDER_COLS = "id, path, country, asr_model, created_at"
+
+
 def list_folders() -> list[dict[str, Any]]:
     """Kuzatilayotgan papkalar / fayllar (davlat bilan)."""
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT id, path, country, created_at FROM watched_folders ORDER BY id ASC"
+            f"SELECT {_FOLDER_COLS} FROM watched_folders ORDER BY id ASC"
         ).fetchall()
     return [_row_to_dict(r) for r in rows]  # type: ignore[misc]
 
@@ -326,10 +331,43 @@ def add_folder(path: str, country: str) -> dict[str, Any]:
                     (country, now, resolved),
                 )
         row = conn.execute(
-            "SELECT id, path, country, created_at FROM watched_folders WHERE country = ?",
+            f"SELECT {_FOLDER_COLS} FROM watched_folders WHERE country = ?",
             (country,),
         ).fetchone()
     sync_country_documents(country, resolved)
+    return _row_to_dict(row)  # type: ignore[return-value]
+
+
+def folder_asr_model_for_country(country: str) -> str:
+    """Davlat papkasiga biriktirilgan ASR model (bo'sh = umumiy sozlama)."""
+    if not country:
+        return ""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT asr_model FROM watched_folders WHERE country = ? LIMIT 1",
+            (country,),
+        ).fetchone()
+    return str(row["asr_model"] or "").strip() if row else ""
+
+
+def update_folder_asr_model(folder_id: int, asr_model: str) -> dict[str, Any]:
+    """Kuzatiladigan papka uchun transkripsiya modelini saqlaydi."""
+    from backend.config import ASR_MODELS
+
+    key = (asr_model or "").strip()
+    if key and key not in ASR_MODELS:
+        raise ValueError(f"Noma'lum ASR model: {key}")
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE watched_folders SET asr_model = ? WHERE id = ?",
+            (key, folder_id),
+        )
+        if cur.rowcount <= 0:
+            raise KeyError(folder_id)
+        row = conn.execute(
+            f"SELECT {_FOLDER_COLS} FROM watched_folders WHERE id = ?",
+            (folder_id,),
+        ).fetchone()
     return _row_to_dict(row)  # type: ignore[return-value]
 
 
@@ -687,19 +725,51 @@ def list_documents(
     return items, total  # type: ignore[misc]
 
 
-def list_home_by_country(limit: int = 10) -> list[dict[str, Any]]:
-    """Kirish oynasi: har davlatning oxirgi N ta hujjati."""
+_LOCAL_TZ = timezone(timedelta(hours=5))
+
+
+def period_start(period: str) -> datetime:
+    """
+    Kalendar davri boshlanishi (O‘zbekiston, UTC+5).
+    day — bugun 00:00; week — dushanba; month — oy boshi; year — yil boshi.
+    """
+    now = datetime.now(_LOCAL_TZ)
+    if period == "week":
+        start = now - timedelta(days=now.weekday())
+    elif period == "month":
+        start = now.replace(day=1)
+    elif period == "year":
+        start = now.replace(month=1, day=1)
+    else:
+        start = now
+    return start.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+
+
+def _period_cutoff(period: str) -> str:
+    return period_start(period).isoformat(timespec="seconds")
+
+
+def _period_days(period: str) -> int:
+    start = period_start(period)
+    now = datetime.now(timezone.utc)
+    return max(1, int((now - start).total_seconds() // 86400) + 1)
+
+
+def list_home_by_country(limit: int = 10, period: str = "day") -> list[dict[str, Any]]:
+    """Kirish oynasi: tanlangan davr ichidagi har davlatning oxirgi N ta hujjati."""
+    cutoff = _period_cutoff(period)
     groups: list[dict[str, Any]] = []
     with get_connection() as conn:
         for spec in COUNTRIES:
             clause, extra = country_document_filter(spec["key"])
+            params = [*extra, cutoff]
             total_row = conn.execute(
-                f"SELECT COUNT(*) AS c FROM documents WHERE {clause}",
-                extra,
+                f"SELECT COUNT(*) AS c FROM documents WHERE {clause} AND created_at >= ?",
+                params,
             ).fetchone()
             rows = conn.execute(
-                f"SELECT * FROM documents WHERE {clause} ORDER BY id DESC LIMIT ?",
-                [*extra, limit],
+                f"SELECT * FROM documents WHERE {clause} AND created_at >= ? ORDER BY id DESC LIMIT ?",
+                [*params, limit],
             ).fetchall()
             groups.append(
                 {
@@ -718,8 +788,8 @@ def country_file_stats(period: str = "month") -> dict[str, Any]:
 
     period: day | week | month | year
     """
-    days = {"day": 1, "week": 7, "month": 30, "year": 365}.get(period, 30)
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    days = _period_days(period)
+    cutoff = _period_cutoff(period)
     items = []
     with get_connection() as conn:
         for spec in COUNTRIES:
@@ -790,12 +860,15 @@ def mark_reprocess(doc_id: int) -> dict[str, Any] | None:
     return update_document(doc_id, **fields)
 
 
+_FLOW_STEP_IDS = ("queued", "extract", "summarize", "translate", "done")
+
+
 def infer_pipeline_stage(doc: dict[str, Any] | None) -> str:
     """Saqlangan yoki maydonlardan joriy bosqich."""
     if not doc:
         return "queued"
     stored = str(doc.get("pipeline_stage") or "").strip()
-    if stored:
+    if stored in _FLOW_STEP_IDS or stored == "error":
         return stored
     status = str(doc.get("status") or "")
     if status == "pending":
@@ -812,6 +885,73 @@ def infer_pipeline_stage(doc: dict[str, Any] | None) -> str:
     if not str(doc.get("translation_uz") or "").strip():
         return "translate"
     return "summarize"
+
+
+def document_flow_steps(doc: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Fayl kelganidan natijagacha: har bosqich holati va qisqa matn."""
+    if not doc:
+        return []
+    status = str(doc.get("status") or "")
+    current = infer_pipeline_stage(doc)
+    if current == "error":
+        original = str(doc.get("original_text") or doc.get("transcription") or "").strip()
+        if not original:
+            current = "extract"
+        elif not str(doc.get("summary") or "").strip():
+            current = "summarize"
+        elif not str(doc.get("translation_uz") or "").strip():
+            current = "translate"
+        else:
+            current = "done"
+    current_idx = _FLOW_STEP_IDS.index(current) if current in _FLOW_STEP_IDS else 0
+    if status == "done":
+        current_idx = len(_FLOW_STEP_IDS) - 1
+
+    original = str(doc.get("original_text") or doc.get("transcription") or "").strip()
+    summary = str(doc.get("summary") or "").strip()
+    translation = str(doc.get("translation_uz") or "").strip()
+    err = str(doc.get("error_message") or "").strip()
+
+    previews = {
+        "queued": f"{doc.get('filename') or 'Fayl'} · {doc.get('file_type') or ''}".strip(" ·"),
+        "extract": original or ("O‘qishda xato: " + err if status == "error" else ""),
+        "summarize": summary,
+        "translate": translation,
+        "done": (
+            str(doc.get("model_used") or "").strip() or "Tayyor"
+            if status == "done"
+            else ""
+        ),
+    }
+    empty_hints = {
+        "queued": "Navbatda",
+        "extract": "OCR / ASR kutilmoqda",
+        "summarize": "Xulosa kutilmoqda",
+        "translate": "Tarjima kutilmoqda",
+        "done": "Natija kutilmoqda",
+    }
+
+    steps: list[dict[str, Any]] = []
+    for idx, sid in enumerate(_FLOW_STEP_IDS):
+        if status == "error" and idx == current_idx:
+            state = "error"
+        elif idx < current_idx or status == "done":
+            state = "done"
+        elif idx == current_idx:
+            state = "current"
+        else:
+            state = "wait"
+        preview = previews[sid]
+        steps.append(
+            {
+                "id": sid,
+                "state": state,
+                "preview": preview[:400],
+                "empty": empty_hints[sid],
+                "has_output": bool(preview) and state in {"done", "current", "error"},
+            }
+        )
+    return steps
 
 
 def list_pipeline_live(limit: int = 40) -> list[dict[str, Any]]:

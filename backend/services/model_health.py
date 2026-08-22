@@ -18,6 +18,10 @@ from backend.config import (
     TRANSLATION_SERVER_URL,
     OCR_SERVER_PORT,
     OCR_SERVER_URL,
+    TRANSLATEGEMMA_SERVER_PORT,
+    TRANSLATEGEMMA_SERVER_URL,
+    SEAMLESS_SERVER_PORT,
+    SEAMLESS_SERVER_URL,
     USE_MODEL_SERVERS,
     list_available_asr_models,
     list_available_llm_models,
@@ -31,6 +35,7 @@ WORKER_SPECS: list[dict[str, Any]] = [
     {
         "id": "gemma",
         "label": "Gemma",
+        "chip_label": "Xulosa",
         "role": "Xulosa va RAG chat",
         "port": LLM_SERVER_PORT,
         "url": LLM_SERVER_URL,
@@ -46,6 +51,7 @@ WORKER_SPECS: list[dict[str, Any]] = [
     {
         "id": "gigaam",
         "label": "GigaAM",
+        "chip_label": "Transkripsiya",
         "role": "Audio / video transkripsiya",
         "port": ASR_SERVER_PORT,
         "url": ASR_SERVER_URL,
@@ -61,6 +67,7 @@ WORKER_SPECS: list[dict[str, Any]] = [
     {
         "id": "nllb",
         "label": "NLLB",
+        "chip_label": "Tarjima",
         "role": "O‘zbekcha (lotin) tarjima",
         "port": TRANSLATION_SERVER_PORT,
         "url": TRANSLATION_SERVER_URL,
@@ -76,6 +83,7 @@ WORKER_SPECS: list[dict[str, Any]] = [
     {
         "id": "surya",
         "label": "Surya",
+        "chip_label": "OCR",
         "role": "Rasm / PDF OCR",
         "port": OCR_SERVER_PORT,
         "url": OCR_SERVER_URL,
@@ -87,6 +95,38 @@ WORKER_SPECS: list[dict[str, Any]] = [
             "--host 127.0.0.1 --port 8004"
         ),
         "download_cmd": ".venv/bin/python -u scripts/download_models.py surya",
+    },
+    {
+        "id": "translategemma",
+        "label": "TranslateGemma",
+        "chip_label": "Tarjima",
+        "role": "O‘zbekcha (lotin) tarjima",
+        "port": TRANSLATEGEMMA_SERVER_PORT,
+        "url": TRANSLATEGEMMA_SERVER_URL,
+        "pid_file": DATA_DIR / "translategemma_worker.pid",
+        "log_file": "data/translategemma_worker.log",
+        "module": "backend.workers.translategemma_app:app",
+        "start_cmd": (
+            ".venv/bin/python -m uvicorn backend.workers.translategemma_app:app "
+            "--host 127.0.0.1 --port 8005"
+        ),
+        "download_cmd": ".venv/bin/python -u scripts/download_models.py translategemma",
+    },
+    {
+        "id": "seamless",
+        "label": "SeamlessM4T",
+        "chip_label": "Seamless",
+        "role": "Audio / video transkripsiya (M4T v2)",
+        "port": SEAMLESS_SERVER_PORT,
+        "url": SEAMLESS_SERVER_URL,
+        "pid_file": DATA_DIR / "seamless_worker.pid",
+        "log_file": "data/seamless_worker.log",
+        "module": "backend.workers.seamless_app:app",
+        "start_cmd": (
+            ".venv/bin/python -m uvicorn backend.workers.seamless_app:app "
+            "--host 127.0.0.1 --port 8006"
+        ),
+        "download_cmd": ".venv/bin/python -u scripts/download_models.py seamless",
     },
 ]
 
@@ -105,9 +145,22 @@ def _disk_ready(worker_id: str) -> bool:
     if worker_id == "gemma":
         return any(m.get("ready") for m in list_available_llm_models())
     if worker_id == "gigaam":
-        return any(m.get("ready") for m in list_available_asr_models())
+        return any(
+            m.get("key") == "gigaam-multilingual" and m.get("ready")
+            for m in list_available_asr_models()
+        )
+    if worker_id == "seamless":
+        return any(
+            m.get("key") == "seamless-m4t-v2" and m.get("ready")
+            for m in list_available_asr_models()
+        )
     if worker_id == "nllb":
-        return any(m.get("ready") for m in list_available_translation_models())
+        return any(m.get("key") == "nllb-200" and m.get("ready") for m in list_available_translation_models())
+    if worker_id == "translategemma":
+        return any(
+            m.get("key") == "translategemma" and m.get("ready")
+            for m in list_available_translation_models()
+        )
     if worker_id == "surya":
         return any(m.get("key") == "surya" and m.get("ready") for m in list_available_ocr_models())
     return False
@@ -140,6 +193,14 @@ def _in_process_status(worker_id: str) -> dict[str, Any]:
         from backend.services.surya_service import surya_service
 
         return surya_service.status()
+    if worker_id == "translategemma":
+        from backend.services.translategemma_service import translategemma_service
+
+        return translategemma_service.status()
+    if worker_id == "seamless":
+        from backend.services.seamless_service import seamless_service
+
+        return seamless_service.status()
     from backend.services.nllb_service import nllb_service
 
     return nllb_service.status()
@@ -222,6 +283,7 @@ def probe_worker(spec: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": spec["id"],
         "label": spec["label"],
+        "chip_label": spec.get("chip_label") or spec["label"],
         "role": spec["role"],
         "port": spec["port"],
         "url": spec["url"],

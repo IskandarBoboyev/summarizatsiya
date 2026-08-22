@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Gemma (8001), GigaAM (8002), NLLB (8003), Surya (8004) va UI (8000).
+# Gemma (8001), GigaAM (8002), NLLB (8003), Surya (8004), TranslateGemma (8005),
+# SeamlessM4T (8006) va UI (8000).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
@@ -52,5 +53,7 @@ start_worker 8001 "Gemma" backend.workers.gemma_app:app data/gemma_worker.log da
 start_worker 8002 "GigaAM" backend.workers.gigaam_app:app data/gigaam_worker.log data/gigaam_worker.pid
 start_worker 8003 "NLLB" backend.workers.nllb_app:app data/nllb_worker.log data/nllb_worker.pid
 start_worker 8004 "Surya" backend.workers.surya_app:app data/surya_worker.log data/surya_worker.pid
+start_worker 8005 "TranslateGemma" backend.workers.translategemma_app:app data/translategemma_worker.log data/translategemma_worker.pid
+start_worker 8006 "SeamlessM4T" backend.workers.seamless_app:app data/seamless_worker.log data/seamless_worker.pid
 # UI ham alohida sessionda — terminal/Cursor yopilsa o'lmasin
 start_worker 8000 "UI" backend.main:app data/ui_server.log data/ui_server.pid

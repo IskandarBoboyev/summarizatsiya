@@ -76,7 +76,8 @@ class OCRParser:
         if engine == "surya" and suffix in IMAGE_EXTENSIONS | {".pdf"}:
             from backend.services.ocr_rpc import ocr_rpc
 
-            return self._normalize_text(ocr_rpc.extract(path))
+            # Layout (ustun, abzats) saqlansin — bo'shliqlarni siqmaymiz
+            return (ocr_rpc.extract(path) or "").replace("\r\n", "\n").strip()
         if suffix == ".pdf":
             text = self._extract_pdf(path)
         elif suffix == ".docx":

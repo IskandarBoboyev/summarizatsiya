@@ -110,8 +110,10 @@ class SuryaService:
         from surya.recognition import RecognitionPredictor
 
         OCR_DIR.mkdir(parents=True, exist_ok=True)
+        _patch_surya_transformers()
         logger.info("Surya yuklanmoqda: %s", OCR_DIR)
         self._foundation = FoundationPredictor()
+        _materialize_foundation(self._foundation.model, self._device)
         self._detector = DetectionPredictor()
         self._recognizer = RecognitionPredictor(self._foundation)
         logger.info("Surya yuklandi (qurilma=%s)", self._device)
@@ -155,6 +157,107 @@ class SuryaService:
         finally:
             pdf.close()
         return images
+
+
+def _patch_surya_transformers() -> None:
+    """Surya 0.16 + transformers 5: pad_token va default RoPE."""
+    import json
+
+    import torch
+    from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
+
+    cfg_path = OCR_DIR / SURYA_REC_CHECKPOINT / "config.json"
+    if cfg_path.is_file():
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        pad_id = data.get("pad_token_id", 66556)
+        decoder = data.setdefault("decoder", {})
+        changed = False
+        if decoder.get("pad_token_id") is None:
+            decoder["pad_token_id"] = pad_id
+            changed = True
+        if decoder.get("eos_token_id") is None and data.get("eos_token_id") is not None:
+            decoder["eos_token_id"] = data["eos_token_id"]
+            changed = True
+        if changed:
+            cfg_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            logger.info("Surya decoder configiga pad_token_id yozildi")
+
+    if "default" not in ROPE_INIT_FUNCTIONS:
+
+        def _default_rope(config, device=None, seq_len=None, **_kwargs):
+            base = float(getattr(config, "rope_theta", 10000.0) or 10000.0)
+            heads = int(getattr(config, "num_attention_heads", 1) or 1)
+            dim = int(getattr(config, "head_dim", 0) or (int(config.hidden_size) // heads))
+            inv_freq = 1.0 / (
+                base
+                ** (
+                    torch.arange(0, dim, 2, dtype=torch.int64).to(device=device, dtype=torch.float)
+                    / dim
+                )
+            )
+            return inv_freq, 1.0
+
+        ROPE_INIT_FUNCTIONS["default"] = _default_rope
+
+    from surya.common.surya import SuryaModel
+
+    if not getattr(SuryaModel, "_tied_keys_patched", False):
+        _orig_init = SuryaModel.__init__
+        _orig_tie = SuryaModel.tie_weights
+
+        def _init(self, *args, **kwargs):
+            _orig_init(self, *args, **kwargs)
+            if not hasattr(self, "all_tied_weights_keys"):
+                self.all_tied_weights_keys = {}
+
+        def _tie(self, *args, **kwargs):
+            return _orig_tie(self)
+
+        def _tie_or_clone_weights(self, output_embeddings, input_embeddings):
+            output_embeddings.weight = input_embeddings.weight
+            if getattr(output_embeddings, "bias", None) is not None:
+                pad = output_embeddings.weight.shape[0] - output_embeddings.bias.shape[0]
+                if pad > 0:
+                    output_embeddings.bias.data = torch.nn.functional.pad(
+                        output_embeddings.bias.data, (0, pad), "constant", 0
+                    )
+            if hasattr(output_embeddings, "out_features") and hasattr(
+                input_embeddings, "num_embeddings"
+            ):
+                output_embeddings.out_features = input_embeddings.num_embeddings
+
+        SuryaModel.__init__ = _init
+        SuryaModel.tie_weights = _tie
+        SuryaModel._tie_or_clone_weights = _tie_or_clone_weights
+        SuryaModel._tied_keys_patched = True
+
+
+def _materialize_foundation(model, device: str) -> None:
+    """Transformers 5 ba'zi og'irliklarni meta da qoldiradi — lm_head ni bog'laymiz."""
+    import torch
+
+    if model is None:
+        return
+    if hasattr(model, "lm_head") and hasattr(model, "embedder"):
+        src = model.embedder.token_embed.weight
+        if src.device.type != "meta":
+            model.lm_head.weight = src
+    leftover = [n for n, p in model.named_parameters() if p.device.type == "meta"]
+    if leftover:
+        logger.warning("Surya meta parametrlar qoldi: %s", leftover[:12])
+    model.to(device)
+    # Vision RoPE inv_freq buffer emas — meta da qoladi, CPU ga qayta yozamiz
+    for module in model.modules():
+        inv = getattr(module, "inv_freq", None)
+        if not torch.is_tensor(inv):
+            continue
+        if inv.device.type == "meta":
+            dim = int(inv.shape[0]) * 2
+            module.inv_freq = 1.0 / (
+                10000.0 ** (torch.arange(0, dim, 2, dtype=torch.float) / dim)
+            )
+        elif inv.device.type != "cpu":
+            module.inv_freq = inv.detach().to("cpu")
 
 
 def lines_to_layout_text(text_lines: list) -> str:

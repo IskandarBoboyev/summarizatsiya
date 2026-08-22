@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Gemma (8001), GigaAM (8002), NLLB (8003), Surya (8004) va UI (8000) holati.
+# Gemma (8001), GigaAM (8002), NLLB (8003), Surya (8004), TranslateGemma (8005),
+# SeamlessM4T (8006) va UI (8000).
 set -u
 cd "$(dirname "$0")/.."
 
@@ -24,6 +25,8 @@ probe "Gemma"  "http://127.0.0.1:8001"
 probe "GigaAM" "http://127.0.0.1:8002"
 probe "NLLB"   "http://127.0.0.1:8003"
 probe "Surya"  "http://127.0.0.1:8004"
+probe "TG"     "http://127.0.0.1:8005"
+probe "M4T"    "http://127.0.0.1:8006"
 
 if curl -sS --max-time 2 -o /dev/null "http://127.0.0.1:8000/api/models/health"; then
   echo

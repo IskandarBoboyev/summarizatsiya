@@ -2,6 +2,7 @@
 """LLM/ASR modellarni barqaror .incomplete fayldan davom ettirib yuklash."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -46,6 +47,22 @@ JOBS = [
         "revision": None,
         "min_weight": 1_000_000_000,
         "aliases": {"nllb", "nllb-200", "tarjima"},
+    },
+    {
+        "label": "TranslateGemma 4B",
+        "repo": "mlx-community/translategemma-4b-it-4bit",
+        "dest": ROOT / "models" / "tarjima_model" / "TranslateGemma",
+        "revision": None,
+        "min_weight": 400_000_000,
+        "aliases": {"translategemma", "translate-gemma", "tgemma", "translategemma-4b"},
+    },
+    {
+        "label": "SeamlessM4T v2",
+        "repo": "facebook/seamless-m4t-v2-large",
+        "dest": ROOT / "models" / "ASR modellar" / "SeamlessM4T-v2",
+        "revision": None,
+        "min_weight": 4_000_000_000,
+        "aliases": {"seamless", "seamlessm4t", "seamless-m4t", "seamless-m4t-v2", "m4t"},
     },
     {
         "label": "Surya OCR",
@@ -191,16 +208,26 @@ def run_surya_s3(job: dict) -> None:
     dest: Path = job["dest"]
     dest.mkdir(parents=True, exist_ok=True)
     os.environ["MODEL_CACHE_DIR"] = str(dest)
-    from surya.common.s3 import check_manifest, download_directory
+    base = "https://models.datalab.to"
 
     for part in job["parts"]:
         local = dest / part
         local.mkdir(parents=True, exist_ok=True)
-        if check_manifest(str(local)):
+        manifest_url = f"{base}/{part}/manifest.json"
+        manifest_path = local / "manifest.json"
+        if not manifest_path.is_file():
+            print(f"  manifest: {part}", flush=True)
+            _curl_resume(manifest_url, manifest_path, None)
+        files = json.loads(manifest_path.read_text(encoding="utf-8")).get("files") or []
+        missing = [name for name in files if not (local / name).is_file() or (local / name).stat().st_size == 0]
+        if not missing:
             print(f"  bor: {part}", flush=True)
             continue
-        print(f"  yuklanmoqda: {part}", flush=True)
-        download_directory(part, str(local))
+        print(f"  yuklanmoqda: {part} ({len(missing)} fayl)", flush=True)
+        for name in missing:
+            target = local / name
+            print(f"    {name}", flush=True)
+            _curl_resume(f"{base}/{part}/{name}", target, None)
         print(f"  tayyor: {part}", flush=True)
     print(f"Tayyor: {dest}", flush=True)
 
@@ -237,7 +264,9 @@ def run_job(job: dict) -> None:
 
 
 def _job_matches(job: dict, needle: str) -> bool:
-    aliases = {job["label"].lower(), job["repo"].lower(), *(job.get("aliases") or set())}
+    aliases = {job["label"].lower(), *(job.get("aliases") or set())}
+    if job.get("repo"):
+        aliases.add(str(job["repo"]).lower())
     aliases.add(str(job["dest"].name).lower())
     return needle.lower() in aliases or any(needle.lower() in a for a in aliases)
 

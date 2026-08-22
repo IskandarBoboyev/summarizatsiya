@@ -234,7 +234,9 @@ LLM_MODELS: dict[str, ModelSpec] = {
 
 # ASR: ai-sage/GigaAM-Multilingual — models/ASR modellar/
 GIGAAM_DIR: Path = ASR_MODELS_DIR / "GigaAM-Multilingual"
+SEAMLESS_DIR: Path = ASR_MODELS_DIR / "SeamlessM4T-v2"
 NLLB_DIR: Path = TRANSLATION_MODELS_DIR
+TRANSLATEGEMMA_DIR: Path = TRANSLATION_MODELS_DIR / "TranslateGemma"
 
 
 @dataclass
@@ -245,6 +247,8 @@ class AsrSpec:
     label: str
     search_dirs: list[Path] = field(default_factory=list)
     hub_glob: str = ""
+    backend: str = "ctc"
+    min_weight: int = 0
 
 
 ASR_MODELS: dict[str, AsrSpec] = {
@@ -256,6 +260,15 @@ ASR_MODELS: dict[str, AsrSpec] = {
             GIGAAM_DIR / "ai-sage" / "GigaAM-Multilingual",
         ],
         hub_glob="models--ai-sage--GigaAM-Multilingual/snapshots/*/config.json",
+        backend="ctc",
+    ),
+    "seamless-m4t-v2": AsrSpec(
+        key="seamless-m4t-v2",
+        label="SeamlessM4T v2",
+        search_dirs=[SEAMLESS_DIR],
+        hub_glob="models--facebook--seamless-m4t-v2-large/snapshots/*/config.json",
+        backend="seq2seq",
+        min_weight=4_000_000_000,
     ),
 }
 
@@ -276,6 +289,8 @@ class TranslationSpec:
 
     key: str
     label: str
+    backend: str = "nllb"
+    min_weight: int = 1_000_000_000
     search_dirs: list[Path] = field(default_factory=list)
 
 
@@ -283,7 +298,15 @@ TRANSLATION_MODELS: dict[str, TranslationSpec] = {
     "nllb-200": TranslationSpec(
         key="nllb-200",
         label="NLLB-200 1.3B",
+        backend="nllb",
         search_dirs=[NLLB_DIR],
+    ),
+    "translategemma": TranslationSpec(
+        key="translategemma",
+        label="TranslateGemma 4B",
+        backend="mlx",
+        min_weight=400_000_000,
+        search_dirs=[TRANSLATEGEMMA_DIR],
     ),
 }
 
@@ -313,6 +336,41 @@ ASR_LANGUAGES: dict[str, str] = {
     "fr": "Fransuzcha",
     "es": "Ispancha",
 }
+
+# SeamlessM4T tgt_lang (ISO 639-3). auto + davlat: mintaqaviy til.
+SEAMLESS_LANG: dict[str, str] = {
+    "uz": "uzb",
+    "ru": "rus",
+    "en": "eng",
+    "kk": "kaz",
+    "ky": "kir",
+    "tg": "tgk",
+    "tr": "tur",
+    "ar": "arb",
+    "zh": "cmn",
+    "de": "deu",
+    "fr": "fra",
+    "es": "spa",
+}
+SEAMLESS_COUNTRY_LANG: dict[str, str] = {
+    "kz": "kaz",
+    "uz": "uzb",
+    "tj": "tgk",
+    "kg": "kir",
+    "af": "pes",
+    "tm": "tuk",
+}
+
+
+def resolve_seamless_tgt_lang(language: str = "auto", country: str = "") -> str:
+    """ASR tili yoki davlatdan Seamless tgt_lang."""
+    lang = (language or "auto").strip().lower()
+    if lang and lang not in {"auto", ""}:
+        if lang in SEAMLESS_LANG:
+            return SEAMLESS_LANG[lang]
+        if len(lang) == 3:
+            return lang
+    return SEAMLESS_COUNTRY_LANG.get((country or "").strip().lower(), "eng")
 
 # Qo'llab-quvvatlanadigan kengaytmalar
 DOCUMENT_EXTENSIONS: set[str] = {".pdf", ".docx", ".txt", ".md", ".rtf"}
@@ -385,11 +443,17 @@ LLM_SERVER_URL: str = os.environ.get("DOC_LLM_URL", "http://127.0.0.1:8001").rst
 ASR_SERVER_URL: str = os.environ.get("DOC_ASR_URL", "http://127.0.0.1:8002").rstrip("/")
 TRANSLATION_SERVER_URL: str = os.environ.get("DOC_TRANSLATION_URL", "http://127.0.0.1:8003").rstrip("/")
 OCR_SERVER_URL: str = os.environ.get("DOC_OCR_URL", "http://127.0.0.1:8004").rstrip("/")
+TRANSLATEGEMMA_SERVER_URL: str = os.environ.get(
+    "DOC_TRANSLATEGEMMA_URL", "http://127.0.0.1:8005"
+).rstrip("/")
+SEAMLESS_SERVER_URL: str = os.environ.get("DOC_SEAMLESS_URL", "http://127.0.0.1:8006").rstrip("/")
 USE_MODEL_SERVERS: bool = os.environ.get("DOC_USE_MODEL_SERVERS", "1") not in {"0", "false", "no"}
 LLM_SERVER_PORT: int = int(os.environ.get("DOC_LLM_PORT", "8001"))
 ASR_SERVER_PORT: int = int(os.environ.get("DOC_ASR_PORT", "8002"))
 TRANSLATION_SERVER_PORT: int = int(os.environ.get("DOC_TRANSLATION_PORT", "8003"))
 OCR_SERVER_PORT: int = int(os.environ.get("DOC_OCR_PORT", "8004"))
+TRANSLATEGEMMA_SERVER_PORT: int = int(os.environ.get("DOC_TRANSLATEGEMMA_PORT", "8005"))
+SEAMLESS_SERVER_PORT: int = int(os.environ.get("DOC_SEAMLESS_PORT", "8006"))
 MODEL_RPC_TIMEOUT: float = float(os.environ.get("DOC_MODEL_RPC_TIMEOUT", "900"))
 
 # Standart sozlamalar
@@ -411,7 +475,9 @@ def ensure_runtime_dirs() -> None:
         LLM_MODELS_DIR / "Gemma 4e",
         LLM_MODELS_DIR / "Gemma 26",
         GIGAAM_DIR,
+        SEAMLESS_DIR,
         NLLB_DIR,
+        TRANSLATEGEMMA_DIR,
         WATCHED_DIR,
         DATA_DIR,
         DATA_DIR / "uploads",
@@ -684,16 +750,29 @@ def list_available_llm_models() -> list[dict]:
     return result
 
 
+def _asr_folder_ready(folder: Path, min_weight: int) -> bool:
+    if not (folder / "config.json").is_file():
+        return False
+    if min_weight <= 0:
+        return True
+    weights = [
+        p for p in folder.iterdir() if p.is_file() and p.suffix in {".safetensors", ".bin"}
+    ]
+    return sum(p.stat().st_size for p in weights) >= min_weight
+
+
 def find_asr_model_dir(spec: AsrSpec) -> Path | None:
-    """ASR model papkasini diskda qidiradi (config.json bo'lishi shart)."""
+    """ASR model papkasini diskda qidiradi (config.json + yetarli og'irlik)."""
+    min_weight = int(getattr(spec, "min_weight", 0) or 0)
     for folder in spec.search_dirs:
-        if (folder / "config.json").is_file():
+        if _asr_folder_ready(folder, min_weight):
             return folder
     if spec.hub_glob:
         hub = HF_CACHE_DIR / "hub"
         if hub.is_dir():
             for snap in hub.glob(spec.hub_glob):
-                return snap.parent
+                if _asr_folder_ready(snap.parent, min_weight):
+                    return snap.parent
     return None
 
 
@@ -706,6 +785,7 @@ def list_available_asr_models() -> list[dict]:
             {
                 "key": key,
                 "label": spec.label,
+                "backend": spec.backend,
                 "path": str(found or spec.search_dirs[0]),
                 "ready": found is not None,
             }
@@ -714,16 +794,18 @@ def list_available_asr_models() -> list[dict]:
 
 
 def find_translation_model_dir(spec: TranslationSpec) -> Path | None:
-    """NLLB papkasida config.json + og'irlik borligini tekshiradi."""
+    """Tarjima papkasida config.json + og'irlik borligini tekshiradi."""
+    min_weight = int(getattr(spec, "min_weight", 1_000_000_000) or 1_000_000_000)
     for folder in spec.search_dirs:
         if not (folder / "config.json").is_file():
             continue
         weights = [
             p
             for p in folder.iterdir()
-            if p.is_file() and p.suffix in {".safetensors", ".bin"} and p.stat().st_size >= 1_000_000_000
+            if p.is_file() and p.suffix in {".safetensors", ".bin"}
         ]
-        if weights:
+        total = sum(p.stat().st_size for p in weights)
+        if total >= min_weight:
             return folder
     return None
 
@@ -756,7 +838,7 @@ def list_available_ocr_models() -> list[dict]:
 
 
 def list_available_translation_models() -> list[dict]:
-    """Tarjima modellari (NLLB) disk holati."""
+    """Tarjima modellari (NLLB, TranslateGemma) disk holati."""
     result: list[dict] = []
     for key, spec in TRANSLATION_MODELS.items():
         found = find_translation_model_dir(spec)
@@ -764,7 +846,7 @@ def list_available_translation_models() -> list[dict]:
             {
                 "key": key,
                 "label": spec.label,
-                "backend": "nllb",
+                "backend": spec.backend,
                 "path": str(found or spec.search_dirs[0]),
                 "ready": found is not None,
             }

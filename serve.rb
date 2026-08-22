@@ -297,6 +297,19 @@ server.mount_proc "/" do |req, res|
     next
   end
 
+  if path == "/gerb.mp4" && method == "GET"
+    file = File.join(ROOT, "public", "gerb.mp4")
+    unless File.file?(file)
+      res.status = 404
+      res.body = "Not found"
+      next
+    end
+    res["Content-Type"] = "video/mp4"
+    res["Cache-Control"] = "no-cache, must-revalidate"
+    res.body = File.binread(file)
+    next
+  end
+
   if path.start_with?("/static/") && method == "GET"
     rel = path.sub(%r{^/static/}, "")
     file = File.expand_path(File.join(STATIC, rel))

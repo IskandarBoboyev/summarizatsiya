@@ -10,13 +10,19 @@
   "use strict";
 
   const PAGE = 12;
-  const HOME_PAGE = 10;
+  const HOME_PAGE = 20;
+  const PERIOD_LABELS = {
+    day: "Bugun",
+    week: "Shu hafta",
+    month: "Shu oy",
+    year: "Shu yil",
+  };
   const VIEWS = ["home", "pipeline", "flow", "chat"];
   const FLOW_STAGES = [
     { id: "queued", label: "Fayl keldi", hint: "Navbat" },
     { id: "extract", label: "O‘qish", hint: "OCR / ASR" },
     { id: "summarize", label: "Xulosa", hint: "Gemma" },
-    { id: "translate", label: "Tarjima", hint: "NLLB" },
+    { id: "translate", label: "Tarjima", hint: "NLLB / TranslateGemma" },
     { id: "done", label: "Natija", hint: "Tayyor" },
   ];
   const COUNTRIES = [
@@ -41,10 +47,11 @@
     settings: {},
     countries: COUNTRIES,
     folders: [],
+    asrModels: [],
     workers: [],
     modelPanelOpen: false,
     modelPanelId: "",
-    flow: { items: [], active: null, columns: {} },
+    flow: { items: [], active: null, columns: {}, selectedId: 0 },
     homeCountry: "",
     home: {
       offset: 0,
@@ -168,16 +175,55 @@
     setModelPanelOpen(true, workerId);
   }
 
+  function selectedTranslateWorker() {
+    const key = String(state.settings.llm_translate_model || "nllb-200").toLowerCase();
+    return key.startsWith("translategemma") ? "translategemma" : "nllb";
+  }
+
+  const CHIP_TITLES = {
+    gemma: "Xulosa",
+    gigaam: "Transkripsiya",
+    seamless: "Transkripsiya",
+    nllb: "Tarjima",
+    translategemma: "Tarjima",
+    surya: "OCR",
+  };
+
+  function chipTitle(w) {
+    return CHIP_TITLES[w && w.id] || "Transkripsiya";
+  }
+
+  function paintChip(chip, w) {
+    if (!chip || !w) return;
+    chip.setAttribute("data-worker", w.id);
+    chip.classList.remove("is-live", "is-listening", "is-down", "is-weights_missing", "is-unknown");
+    chip.classList.add(`is-${w.state || "unknown"}`);
+    const shown = chipTitle(w);
+    const text = chip.querySelector(".model-chip-text");
+    if (text) text.textContent = shown;
+    chip.title = `${shown}: ${w.state_label || "noma’lum"}`;
+  }
+
   function renderWorkers(workers) {
     const root = $("model-health");
     if (!root) return;
     state.workers = workers;
+    const translateId = selectedTranslateWorker();
+    const translateChip = $("chip-translate");
     for (const w of workers) {
-      const chip = root.querySelector(`[data-worker="${w.id}"]`);
-      if (!chip) continue;
-      chip.classList.remove("is-live", "is-listening", "is-down", "is-weights_missing", "is-unknown");
-      chip.classList.add(`is-${w.state || "unknown"}`);
-      chip.title = `${w.label}: ${w.state_label || "noma’lum"}`;
+      if (w.id === "nllb" || w.id === "translategemma" || w.id === "seamless") continue;
+      paintChip(root.querySelector(`[data-worker="${w.id}"]`), w);
+    }
+    const translateWorker = workers.find((w) => w.id === translateId);
+    if (translateChip && translateWorker) paintChip(translateChip, translateWorker);
+    paintOptionStates();
+    if (
+      state.modelPanelOpen &&
+      (state.modelPanelId === "nllb" || state.modelPanelId === "translategemma") &&
+      state.modelPanelId !== translateId
+    ) {
+      setModelPanelOpen(false);
+      return;
     }
     if (state.modelPanelOpen) renderWorkerPanel();
   }
@@ -200,13 +246,14 @@
     ]
       .filter(Boolean)
       .join(" · ");
+    const shown = chipTitle(w);
     panel.innerHTML = `
       <div class="model-health-head">
-        <strong>${escapeHtml(w.label)}</strong>
+        <strong>${escapeHtml(shown)}</strong>
         <button type="button" class="btn btn-tiny" id="btn-model-refresh">Tekshirish</button>
       </div>
       <article class="model-health-card is-${escapeHtml(w.state || "unknown")}">
-        <h3><span class="model-dot"></span>${escapeHtml(w.label)} — ${escapeHtml(w.state_label || "")}</h3>
+        <h3><span class="model-dot"></span>${escapeHtml(shown)} — ${escapeHtml(w.state_label || "")}</h3>
         <p>${escapeHtml(w.role || "")}</p>
         <div class="model-health-meta">${escapeHtml(meta)}</div>
         <p>${escapeHtml(w.hint || "")}</p>
@@ -266,6 +313,25 @@
     if (pipe) pipe.innerHTML = html;
   }
 
+  function asrModelOptions(selected) {
+    const models = (state.asrModels || []).length
+      ? state.asrModels
+      : [
+          { key: "gigaam-multilingual", label: "GigaAM Multilingual" },
+          { key: "seamless-m4t-v2", label: "SeamlessM4T v2" },
+        ];
+    const inherit = selected ? "" : " selected";
+    const opts = [`<option value=""${inherit}>Umumiy sozlama</option>`];
+    models.forEach((m) => {
+      const sel = selected === m.key ? " selected" : "";
+      const mark = m.ready === false ? " (yo‘q)" : "";
+      opts.push(
+        `<option value="${escapeHtml(m.key)}"${sel}>${escapeHtml(m.label)}${mark}</option>`
+      );
+    });
+    return opts.join("");
+  }
+
   function renderCountryFiles() {
     const list = $("country-file-list");
     if (!list) return;
@@ -277,12 +343,19 @@
       .map((c) => {
         const f = byCountry[c.key];
         const path = f ? f.path : "Tanlanmagan";
-        return `<li data-pick-country="${c.key}">
+        const asr = f
+          ? `<label class="asr-row">
+              <span>Transkripsiya</span>
+              <select data-folder-asr data-folder-id="${f.id}">${asrModelOptions(f.asr_model || "")}</select>
+            </label>`
+          : `<p class="hint">Avval papka tanlang — keyin ASR modelini belgilaysiz.</p>`;
+        return `<li>
           <div class="row">
             <strong>${escapeHtml(c.label)}</strong>
             <button type="button" class="btn btn-tiny" data-pick-country="${c.key}">Tanlash</button>
           </div>
           <code title="${escapeHtml(path)}">${escapeHtml(path)}</code>
+          ${asr}
         </li>`;
       })
       .join("");
@@ -319,6 +392,12 @@
   function renderHomeGroups(groups) {
     const grid = $("home-grid");
     if (!grid) return;
+    const title = document.querySelector("#view-home .home-main .view-title");
+    if (title) {
+      title.textContent = `Davlatlar bo‘yicha xulosalar · ${
+        PERIOD_LABELS[state.period] || PERIOD_LABELS.day
+      }`;
+    }
     const filtered = state.homeCountry
       ? (groups || []).filter((g) => g.key === state.homeCountry)
       : groups || [];
@@ -329,9 +408,10 @@
       items.forEach((doc) => {
         if (doc && doc.id) state.home.ids.add(doc.id);
       });
+      if (!items.length && !state.homeCountry) return;
       const tiles = items.length
         ? `<div class="home-grid-inner">${items.map((doc) => homeTileHtml(doc)).join("")}</div>`
-        : `<p class="home-group-empty">Bu davlat uchun hali xulosa yo‘q.</p>`;
+        : `<p class="home-group-empty">Bu davrda hali xulosa yo‘q.</p>`;
       parts.push(`
         <section class="home-group" data-home-group="${escapeHtml(g.key)}">
           <div class="home-group-head">
@@ -342,7 +422,9 @@
         </section>`);
     });
     grid.innerHTML = parts.join("");
-    $("home-empty").hidden = state.home.ids.size > 0 || filtered.length > 0;
+    const sk = $("home-skeleton");
+    if (sk) sk.hidden = true;
+    $("home-empty").hidden = state.home.ids.size > 0;
   }
 
   function renderCountryStats(data) {
@@ -459,7 +541,34 @@
     }
   }
 
-  function fillOptionList(list, models, current, attr) {
+  function workerIdForModel(key, kind) {
+    const k = String(key || "").toLowerCase();
+    if (kind === "translate") return k.startsWith("translategemma") ? "translategemma" : "nllb";
+    if (kind === "asr") return k.startsWith("seamless") ? "seamless" : "gigaam";
+    if (kind === "ocr") return k === "surya" ? "surya" : "gemma";
+    return "gemma";
+  }
+
+  function workerById(id) {
+    return (state.workers || []).find((w) => w.id === id) || null;
+  }
+
+  function paintOptionStates() {
+    document.querySelectorAll(".option-btn[data-worker-ref]").forEach((btn) => {
+      const w = workerById(btn.getAttribute("data-worker-ref"));
+      const ready = !btn.disabled;
+      const st = (w && w.state) || (ready ? "unknown" : "weights_missing");
+      btn.classList.remove("is-live", "is-listening", "is-down", "is-weights_missing", "is-unknown");
+      btn.classList.add(`is-${st}`);
+      const hint = btn.querySelector("small");
+      if (hint && w && w.state_label) {
+        const extra = ready ? btn.getAttribute("data-backend") || "" : "diskda yo‘q";
+        hint.textContent = extra ? `${w.state_label} · ${extra}` : w.state_label;
+      }
+    });
+  }
+
+  function fillOptionList(list, models, current, attr, kind) {
     list.innerHTML = "";
     if (!models.length) {
       list.innerHTML = `<div class="picker-empty">Tizimda model topilmadi</div>`;
@@ -468,14 +577,20 @@
     for (const m of models) {
       const btn = document.createElement("button");
       btn.type = "button";
+      const workerId = workerIdForModel(m.key, kind);
       btn.className = "option-btn" + (m.key === current ? " is-current" : "");
       btn.disabled = !m.ready;
       btn.setAttribute(attr, m.key);
-      btn.innerHTML = `<span>${escapeHtml(m.label)}</span><small>${
+      btn.setAttribute("data-worker-ref", workerId);
+      btn.setAttribute("data-backend", m.ready ? m.backend || "lokal" : "");
+      btn.innerHTML = `<span class="option-head"><span class="model-dot" aria-hidden="true"></span><span>${escapeHtml(
+        m.label
+      )}</span></span><small>${
         m.ready ? escapeHtml(m.backend || "lokal") : "diskda yo‘q"
       }</small>`;
       list.appendChild(btn);
     }
+    paintOptionStates();
   }
 
   function currentLabel(models, key, fallback) {
@@ -498,23 +613,25 @@
     const trModels = data.translation_models || [];
     const summaryKey = state.settings.llm_summary_model || state.settings.llm_model;
     const translateKey = state.settings.llm_translate_model || "nllb-200";
-    fillOptionList($("llm-summary-list"), llmModels, summaryKey, "data-llm-summary");
-    fillOptionList($("llm-translate-list"), trModels, translateKey, "data-llm-translate");
+    fillOptionList($("llm-summary-list"), llmModels, summaryKey, "data-llm-summary", "llm");
+    fillOptionList($("llm-translate-list"), trModels, translateKey, "data-llm-translate", "translate");
     const sumLabel = currentLabel(llmModels, summaryKey, "Tanlang");
     const trLabel = currentLabel(trModels, translateKey, "NLLB-200");
     $("llm-value").textContent = `Xulosa: ${sumLabel} · Tarjima: ${trLabel}`;
 
     const asrModels = data.asr_models || [];
-    fillOptionList($("asr-list"), asrModels, state.settings.asr_model, "data-asr");
+    state.asrModels = asrModels;
+    fillOptionList($("asr-list"), asrModels, state.settings.asr_model, "data-asr", "asr");
     $("asr-value").textContent = currentLabel(asrModels, state.settings.asr_model, "Tanlang");
 
     const ocrModels = data.ocr_models || [];
     const ocrKey = state.settings.ocr_model || "surya";
-    fillOptionList($("ocr-list"), ocrModels, ocrKey, "data-ocr");
+    fillOptionList($("ocr-list"), ocrModels, ocrKey, "data-ocr", "ocr");
     if ($("ocr-value")) $("ocr-value").textContent = currentLabel(ocrModels, ocrKey, "Surya OCR");
 
     const langs = Object.entries(data.asr_languages || {});
     fillSelect(asrLangSelect, langs, state.settings.asr_language);
+    renderCountryFiles();
     return data;
   }
 
@@ -592,17 +709,33 @@
 
   async function loadHomePage() {
     const h = state.home;
-    if (h.loading) return;
+    const period = state.period || "day";
+    h.seq = (h.seq || 0) + 1;
+    const seq = h.seq;
     h.loading = true;
+    const sk = $("home-skeleton");
+    const emptyHome = $("home-empty");
+    if (sk && !h.ids.size) {
+      sk.hidden = false;
+      if (emptyHome) emptyHome.hidden = true;
+    }
     try {
-      const data = await api(`/api/documents/home?limit=${HOME_PAGE}`);
+      const data = await api(
+        `/api/documents/home?limit=${HOME_PAGE}&period=${encodeURIComponent(period)}`
+      );
+      if (seq !== h.seq) return;
       h.groups = data.countries || [];
       renderHomeCountryTabs();
       renderHomeGroups(h.groups);
     } catch (err) {
       console.error(err);
+      if (seq !== h.seq) return;
+      if (sk) sk.hidden = true;
+      if (emptyHome && !h.ids.size) emptyHome.hidden = false;
     } finally {
+      if (seq !== h.seq) return;
       h.loading = false;
+      if (sk && h.ids.size) sk.hidden = true;
     }
   }
 
@@ -643,21 +776,53 @@
   function renderFlow(data) {
     const stages = data.stages || FLOW_STAGES;
     const columns = data.columns || {};
+    const items = data.items || [];
     const active = data.active || null;
-    state.flow = { items: data.items || [], active, columns };
-    const activeStage = active ? flowStageOf(active) : "";
-    const activeIdx = flowStageIndex(activeStage);
+    const prevId = Number(state.flow.selectedId || 0);
+    const selected =
+      items.find((d) => Number(d.id) === prevId) ||
+      active ||
+      items.find((d) => d.status === "processing") ||
+      items[0] ||
+      null;
+    state.flow = {
+      items,
+      active,
+      columns,
+      selectedId: selected ? Number(selected.id) : 0,
+    };
 
+    const filesEl = $("flow-files");
+    if (filesEl) {
+      filesEl.innerHTML = items.length
+        ? items
+            .slice(0, 24)
+            .map((doc) => {
+              const sel = selected && Number(selected.id) === Number(doc.id);
+              const err = doc.status === "error";
+              const stage = stages.find((s) => s.id === flowStageOf(doc));
+              return `<button type="button" class="flow-file${sel ? " is-current" : ""}${
+                err ? " is-error" : ""
+              }" data-flow-select="${doc.id}">
+                <strong title="${escapeHtml(doc.filename || "")}">${escapeHtml(doc.filename || "")}</strong>
+                <span>${escapeHtml(countryLabel(doc.country))} · ${escapeHtml(
+                  stage ? stage.label : statusLabel(doc.status)
+                )}</span>
+              </button>`;
+            })
+            .join("")
+        : `<p class="hint">Hali fayl yo‘q. Papkaga tushsa, shu yerda yo‘li ochiladi.</p>`;
+    }
+
+    const steps = (selected && selected.flow_steps) || [];
+    const stepById = Object.fromEntries(steps.map((s) => [s.id, s]));
     const track = $("flow-track");
     if (track) {
       track.innerHTML = stages
         .map((s, idx) => {
+          const st = stepById[s.id] || {};
           const count = (columns[s.id] || []).length;
-          let cls = "flow-node";
-          if (active && active.status === "error" && s.id === "done") cls += " is-error";
-          else if (s.id === activeStage) cls += " is-current";
-          else if (activeIdx >= 0 && idx < activeIdx) cls += " is-done";
-          else if (!active && s.id === "done" && count) cls += " is-done";
+          let cls = `flow-node is-${st.state || "wait"}`;
           return `<li class="${cls}">
             <span class="flow-orb">${idx + 1}</span>
             <strong>${escapeHtml(s.label)}</strong>
@@ -670,60 +835,54 @@
 
     const banner = $("flow-active");
     if (banner) {
-      if (active) {
-        const extractHint =
-          active.file_type === "audio" || active.file_type === "video"
-            ? "GigaAM eshitmoqda"
-            : "OCR / matn ajratilmoqda";
-        const stageHint = {
-          queued: "Navbatda kutmoqda",
-          extract: extractHint,
-          summarize: "Gemma xulosa yozmoqda",
-          translate: "NLLB tarjima qilmoqda",
-          done: "Tayyor",
-          error: active.error_message || "Xato",
-        }[flowStageOf(active)] || statusLabel(active.status);
-        banner.classList.add("is-busy");
-        banner.innerHTML = `<h3>${escapeHtml(active.filename || "Fayl")}</h3>
-          <p>${escapeHtml(countryLabel(active.country))} · ${fileKindLabel(active.file_type)} · ${escapeHtml(stageHint)}</p>`;
+      if (selected) {
+        const busy = selected.status === "processing" || selected.status === "pending";
+        banner.classList.toggle("is-busy", busy);
+        const stageMeta = stages.find((s) => s.id === flowStageOf(selected));
+        banner.innerHTML = `<h3>${escapeHtml(selected.filename || "Fayl")}</h3>
+          <p>${escapeHtml(countryLabel(selected.country))} · ${fileKindLabel(
+            selected.file_type
+          )} · ${formatBytes(selected.file_size)} · ${escapeHtml(
+            stageMeta ? stageMeta.label : statusLabel(selected.status)
+          )} · ${escapeHtml(statusLabel(selected.status))}</p>`;
       } else {
-        const pending = (columns.queued || []).length;
         banner.classList.remove("is-busy");
-        banner.innerHTML = pending
-          ? `<p>Hozir ishlanayotgan fayl yo‘q. Navbatda ${pending} ta fayl.</p>`
-          : `<p>Hozir ish ketmayapti. Papkaga fayl tushsa, bosqichlar shu yerda yuradi.</p>`;
+        banner.innerHTML = `<p>Hozir ish ketmayapti. Papkaga fayl tushsa, barcha bosqichlar shu yerda yuradi.</p>`;
       }
     }
 
-    const board = $("flow-board");
-    if (board) {
-      board.innerHTML = stages
-        .map((s) => {
-          const files = columns[s.id] || [];
-          const extra = s.id === "done" ? columns.error || [] : [];
-          const all = s.id === "done" ? files.concat(extra) : files;
-          const chips = all.length
-            ? all
-                .slice(0, 8)
-                .map((doc) => {
-                  const err = doc.status === "error";
-                  const cur = active && Number(active.id) === Number(doc.id);
-                  return `<button type="button" class="flow-chip${
-                    cur ? " is-current" : ""
-                  }${err ? " is-error" : ""}" data-flow-doc="${doc.id}" data-doc-country="${escapeHtml(
-                    doc.country || ""
-                  )}">
-                    <strong title="${escapeHtml(doc.filename || "")}">${escapeHtml(doc.filename || "")}</strong>
-                    <span>${escapeHtml(countryLabel(doc.country))} · ${
-                      err ? "xato" : statusLabel(doc.status)
-                    }</span>
-                  </button>`;
-                })
-                .join("")
-            : `<p class="hint">Bo‘sh</p>`;
-          return `<section class="flow-col"><h3>${escapeHtml(s.label)}</h3>${chips}</section>`;
-        })
-        .join("");
+    const journey = $("flow-journey");
+    if (journey) {
+      if (!selected) {
+        journey.innerHTML = "";
+      } else {
+        journey.innerHTML = stages
+          .map((s, idx) => {
+            const st = stepById[s.id] || { state: "wait", preview: "", empty: "" };
+            const body = st.preview
+              ? escapeHtml(st.preview)
+              : `<span class="prose muted">${escapeHtml(st.empty || "Kutilmoqda")}</span>`;
+            return `<section class="flow-step is-${escapeHtml(st.state || "wait")}">
+              <header>
+                <span class="flow-step-n">${idx + 1}</span>
+                <div>
+                  <h3>${escapeHtml(s.label)}</h3>
+                  <small>${escapeHtml(s.hint || "")} · ${
+                    st.state === "done"
+                      ? "o‘tdi"
+                      : st.state === "current"
+                        ? "hozir"
+                        : st.state === "error"
+                          ? "xato"
+                          : "kutilmoqda"
+                  }</small>
+                </div>
+              </header>
+              <pre class="prose">${body}</pre>
+            </section>`;
+          })
+          .join("");
+      }
     }
   }
 
@@ -894,12 +1053,22 @@
   function syncEmpty() {
     const has = feed.children.length > 0;
     empty.hidden = has;
+    const sk = $("feed-skeleton");
+    if (sk && has) sk.hidden = true;
   }
 
   async function loadPage() {
     if (state.loading || !state.hasMore) return;
     state.loading = true;
-    if (sentinel) sentinel.hidden = false;
+    const firstPaint = state.offset === 0 && state.docs.size === 0;
+    const sk = $("feed-skeleton");
+    if (sk && firstPaint) {
+      sk.hidden = false;
+      empty.hidden = true;
+      if (sentinel) sentinel.hidden = true;
+    } else if (sentinel) {
+      sentinel.hidden = false;
+    }
     try {
       const data = await api(
         `/api/documents?offset=${state.offset}&limit=${PAGE}&country=${encodeURIComponent(state.country)}`
@@ -913,6 +1082,7 @@
       console.error(err);
     } finally {
       state.loading = false;
+      if (sk) sk.hidden = true;
       if (sentinel) sentinel.hidden = !state.hasMore;
       syncEmpty();
     }
@@ -1179,16 +1349,31 @@
   });
 
   bind("btn-flow-refresh", "click", () => {
-    refreshFlow().catch((err) => alert(err.message));
+    const btn = $("btn-flow-refresh");
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add("is-busy");
+    }
+    refreshFlow()
+      .catch((err) => alert(err.message))
+      .finally(() => {
+        if (btn) {
+          btn.disabled = false;
+          btn.classList.remove("is-busy");
+        }
+      });
   });
 
-  bind("flow-board", "click", (e) => {
-    const chip = e.target.closest("[data-flow-doc]");
+  bind("flow-files", "click", (e) => {
+    const chip = e.target.closest("[data-flow-select]");
     if (!chip) return;
-    const country = chip.getAttribute("data-doc-country");
-    if (country) setCountry(country, false);
-    setView("pipeline");
-    resetPipelineFeed();
+    state.flow.selectedId = Number(chip.getAttribute("data-flow-select") || 0);
+    renderFlow({
+      stages: FLOW_STAGES,
+      columns: state.flow.columns,
+      items: state.flow.items,
+      active: state.flow.active,
+    });
   });
 
   bind("home-grid", "click", (e) => {
@@ -1212,7 +1397,16 @@
     );
     input.value = "";
     box.scrollTop = box.scrollHeight;
-    $("btn-chat-send").disabled = true;
+    const sendBtn = $("btn-chat-send");
+    sendBtn.disabled = true;
+    sendBtn.classList.add("is-busy");
+    const pending = document.createElement("div");
+    pending.className = "chat-bubble bot is-pending";
+    pending.id = "chat-pending";
+    pending.innerHTML =
+      `<span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>Javob tayyorlanmoqda…`;
+    box.appendChild(pending);
+    box.scrollTop = box.scrollHeight;
     try {
       const res = await api("/api/chat", {
         method: "POST",
@@ -1222,17 +1416,20 @@
       const src = names.length
         ? `<p class="chat-sources">Manba: ${escapeHtml(names.join(", "))}</p>`
         : "";
+      pending.remove();
       box.insertAdjacentHTML(
         "beforeend",
         `<div class="chat-bubble bot">${escapeHtml(res.reply || "")}${src}</div>`
       );
     } catch (err) {
+      pending.remove();
       box.insertAdjacentHTML(
         "beforeend",
         `<div class="chat-bubble bot">${escapeHtml(err.message)}</div>`
       );
     } finally {
-      $("btn-chat-send").disabled = false;
+      sendBtn.disabled = false;
+      sendBtn.classList.remove("is-busy");
       box.scrollTop = box.scrollHeight;
     }
   });
@@ -1338,11 +1535,29 @@
   });
 
   bind("country-file-list", "click", (e) => {
-    const btn = e.target.closest("[data-pick-country]");
+    const btn = e.target.closest("button[data-pick-country]");
     if (!btn) return;
     e.preventDefault();
     e.stopPropagation();
     openPicker(btn.getAttribute("data-pick-country")).catch((err) => alert(err.message));
+  });
+
+  bind("country-file-list", "change", (e) => {
+    const sel = e.target.closest("[data-folder-asr]");
+    if (!sel) return;
+    e.stopPropagation();
+    const id = sel.getAttribute("data-folder-id");
+    if (!id) return;
+    sel.disabled = true;
+    api(`/api/folders/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ asr_model: sel.value || "" }),
+    })
+      .then(() => refreshFolders())
+      .catch((err) => alert(err.message))
+      .finally(() => {
+        sel.disabled = false;
+      });
   });
 
   bind("btn-upload-file", "click", () => {
@@ -1415,6 +1630,7 @@
       b.classList.toggle("is-active", b === btn);
     });
     loadCountryStats();
+    loadHomePage().catch(() => {});
   });
 
   bind("btn-stats-chart", "click", () => {
