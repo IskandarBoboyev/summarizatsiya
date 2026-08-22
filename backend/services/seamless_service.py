@@ -158,9 +158,14 @@ class SeamlessService:
                 audio, orig_sr=sample_rate, target_sr=AUDIO_SAMPLE_RATE
             ).astype("float32")
             sample_rate = AUDIO_SAMPLE_RATE
-        inputs = self._processor(
-            audios=audio, sampling_rate=sample_rate, return_tensors="pt"
-        )
+        try:
+            inputs = self._processor(
+                audio=audio, sampling_rate=sample_rate, return_tensors="pt"
+            )
+        except TypeError:
+            inputs = self._processor(
+                audios=audio, sampling_rate=sample_rate, return_tensors="pt"
+            )
         device = next(self._model.parameters()).device
         inputs = {k: v.to(device) for k, v in inputs.items() if hasattr(v, "to")}
         with torch.inference_mode():

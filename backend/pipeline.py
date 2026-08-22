@@ -36,6 +36,7 @@ from backend.database import (
 from backend.services.asr_rpc import asr_rpc
 from backend.services.llm_rpc import llm_rpc
 from backend.services.ocr_parser import ocr_parser
+from backend.services.nllb_service import src_lang_for_country
 from backend.services.translation_rpc import translate_text
 from backend.services.translation_text import (
     clean_summary_output,
@@ -214,6 +215,10 @@ class DocumentPipeline:
                 country=str(doc.get("country") or ""),
                 doc_id=int(doc["id"]),
                 translate_key=translate_key,
+                src_lang=src_lang_for_country(
+                    str(doc.get("country") or ""),
+                    asr_lang if is_media else "",
+                ),
             )
             model_used = (
                 f"{asr_model} + {summary_key} + {translate_key}"
@@ -241,7 +246,7 @@ class DocumentPipeline:
         if looks_like_english(text):
             src = "eng_Latn"
         elif looks_like_cyrillic(text):
-            src = "auto"
+            src = src_lang_for_country(country) or "auto"
         if src:
             logger.info("Xulosa %s — %s orqali o'zbek lotiniga o'giriladi", src, translate_key)
             text = translate_text(text, src_lang=src, country=country, model_key=translate_key)
@@ -254,6 +259,7 @@ class DocumentPipeline:
         country: str,
         doc_id: int,
         translate_key: str = "nllb-200",
+        src_lang: str = "auto",
     ) -> str:
         """
         Asl hujjatni to'liq, paragraf-paragraf o'zbek lotiniga o'giradi.
@@ -267,7 +273,7 @@ class DocumentPipeline:
         for idx, (chunk, sep) in enumerate(units, start=1):
             piece = translate_text(
                 chunk,
-                src_lang="auto",
+                src_lang=src_lang or "auto",
                 country=country,
                 model_key=translate_key,
             )

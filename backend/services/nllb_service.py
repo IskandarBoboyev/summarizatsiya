@@ -53,6 +53,23 @@ ISO_TO_NLLB: dict[str, str] = {
     "ps": "pbt_Arab",
 }
 
+COUNTRY_ISO_SRC: dict[str, str] = {
+    "tj": "tg",
+    "kz": "kk",
+    "kg": "ky",
+    "tm": "tk",
+    "af": "fa",
+}
+
+
+def src_lang_for_country(country: str, asr_language: str = "") -> str:
+    """Davlat yoki ASR tilidan tarjima manbasi."""
+    asr = (asr_language or "").strip().lower()
+    if asr and asr not in {"auto", "uz"}:
+        return asr
+    return COUNTRY_ISO_SRC.get((country or "").strip().lower(), "auto")
+
+
 COUNTRY_TO_NLLB: dict[str, dict[str, str]] = {
     "uz": {"latn": "uzn_Latn", "cyrl": "uzn_Cyrl"},
     "kz": {"latn": "kaz_Latn", "cyrl": "kaz_Cyrl"},

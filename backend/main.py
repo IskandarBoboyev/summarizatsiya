@@ -260,6 +260,15 @@ async def gerb_video() -> FileResponse:
     return FileResponse(path, media_type="video/mp4")
 
 
+@app.get("/askar.mp4")
+async def askar_video() -> FileResponse:
+    """Lokal askar videosi — tashqi URL yo'q."""
+    path = FRONTEND_DIR.parent / "public" / "askar.mp4"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="askar.mp4 topilmadi")
+    return FileResponse(path, media_type="video/mp4")
+
+
 # ---------------------------------------------------------------------------
 # Holat / sozlamalar
 # ---------------------------------------------------------------------------

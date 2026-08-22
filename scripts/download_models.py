@@ -253,7 +253,7 @@ def run_job(job: dict) -> None:
     for name in files:
         if name in skip or name.endswith(".lock") or name.endswith(".md"):
             continue
-        if has_sft and name.endswith(".bin"):
+        if has_sft and name.endswith((".bin", ".pt", ".ckpt")):
             continue
         wanted.append(name)
     # Avval kichik fayllar (tokenizer), keyin og'irlik
